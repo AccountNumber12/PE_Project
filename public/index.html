@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VG Vault - Collectibles Auction</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <h1 onclick="showHome()">VG Vault</h1>
+            </div>
+            <div class="nav-search">
+                <input type="text" id="searchInput" placeholder="Search auctions...">
+                <button onclick="searchAuctions()">Search</button>
+            </div>
+            <div class="nav-auth" id="navAuth">
+                <button onclick="showLogin()">Login</button>
+                <button onclick="showRegister()">Sign Up</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Home Page -->
+        <div id="homePage" class="page active">
+            <div class="hero-section">
+                <h2>Welcome to VG Vault</h2>
+                <p>Discover and bid on amazing collectibles from fellow enthusiasts</p>
+                <button onclick="showCreateAuction()" id="createAuctionBtn" style="display: none;">List an Item</button>
+            </div>
+
+            <div class="auctions-section">
+                <h3>Live Auctions</h3>
+                <div id="auctionsGrid" class="auctions-grid">
+                    <!-- Auctions will be loaded here -->
+                    <div class="loading-message" style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: #6c757d;">
+                        Loading auctions...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auction Detail Page -->
+        <div id="auctionDetailPage" class="page">
+            <div id="auctionDetail">
+                <!-- Auction details will be loaded here -->
+                <div class="loading-message" style="text-align: center; padding: 2rem; color: #6c757d;">
+                    Loading auction details...
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Auction Page -->
+        <div id="createAuctionPage" class="page">
+            <div class="form-container">
+                <h2>Create New Auction</h2>
+                <form id="createAuctionForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="title">Title: <span style="color: #dc3545;">*</span></label>
+                        <input type="text" id="title" name="title" required maxlength="100" placeholder="Enter item title">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="description">Description: <span style="color: #dc3545;">*</span></label>
+                        <textarea id="description" name="description" required maxlength="1000" placeholder="Describe your item in detail"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="startingPrice">Starting Price ($): <span style="color: #dc3545;">*</span></label>
+                        <input type="number" id="startingPrice" name="startingPrice" min="0" step="0.01" required placeholder="0.00">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="hammerPrice">Buy Now Price ($) - Optional:</label>
+                        <input type="number" id="hammerPrice" name="hammerPrice" min="0" step="0.01" placeholder="Leave empty if no buy now option">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="duration">Auction Duration: <span style="color: #dc3545;">*</span></label>
+                        <select id="duration" name="duration" required>
+                            <option value="">Select duration</option>
+                            <option value="7">1 Week</option>
+                            <option value="14">2 Weeks</option>
+                            <option value="30">1 Month</option>
+                            <option value="60">2 Months</option>
+                            <option value="90">3 Months</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="images">Images (up to 5, optional):</label>
+                        <input type="file" id="images" name="images" multiple accept="image/*" max="5">
+                        <small style="color: #6c757d;">Supported formats: JPG, PNG, GIF. Max 5 images.</small>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Create Auction</button>
+                        <button type="button" onclick="showHome()" class="btn btn-secondary">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- User Dashboard -->
+        <div id="dashboardPage" class="page">
+            <div class="dashboard-container">
+                <h2>My Dashboard</h2>
+                <div class="dashboard-tabs">
+                    <button class="tab-btn active" onclick="showDashboardTab('bids')">My Bids</button>
+                    <button class="tab-btn" onclick="showDashboardTab('listings')">My Listings</button>
+                </div>
+                
+                <div id="dashboardContent">
+                    <!-- Dashboard content will be loaded here -->
+                    <div class="loading-message" style="text-align: center; padding: 2rem; color: #6c757d;">
+                        Loading dashboard...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Admin Panel -->
+        <div id="adminPage" class="page">
+            <div class="admin-container">
+                <h2>Admin Panel</h2>
+                <div id="adminContent">
+                    <!-- Admin content will be loaded here -->
+                    <div class="loading-message" style="text-align: center; padding: 2rem; color: #6c757d;">
+                        Loading admin panel...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="hideLogin()">&times;</span>
+            <h2>Login to VG Vault</h2>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="loginUsername">Username:</label>
+                    <input type="text" id="loginUsername" required autocomplete="username" placeholder="Enter your username">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password:</label>
+                    <input type="password" id="loginPassword" required autocomplete="current-password" placeholder="Enter your password">
+                </div>
+                <button type="submit">Login</button>
+                <p style="text-align: center; margin-top: 1rem; color: #6c757d;">
+                    Don't have an account? <a href="#" onclick="hideLogin(); showRegister();" style="color: #ff6b35;">Sign up here</a>
+                </p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Register Modal -->
+    <div id="registerModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="hideRegister()">&times;</span>
+            <h2>Join VG Vault</h2>
+            <form id="registerForm">
+                <div class="form-group">
+                    <label for="registerUsername">Username:</label>
+                    <input type="text" id="registerUsername" required autocomplete="username" placeholder="Choose a username" minlength="3" maxlength="20">
+                </div>
+                <div class="form-group">
+                    <label for="registerEmail">Email:</label>
+                    <input type="email" id="registerEmail" required autocomplete="email" placeholder="Enter your email address">
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">Password:</label>
+                    <input type="password" id="registerPassword" required autocomplete="new-password" placeholder="Create a password" minlength="6">
+                </div>
+                <button type="submit">Sign Up</button>
+                <p style="text-align: center; margin-top: 1rem; color: #6c757d;">
+                    Already have an account? <a href="#" onclick="hideRegister(); showLogin();" style="color: #ff6b35;">Login here</a>
+                </p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Debug Panel (only visible in development) -->
+    <div id="debugPanel" style="position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 0.5rem; border-radius: 4px; font-size: 0.8rem; display: none; z-index: 1000;">
+        <div>User: <span id="debugUser">Not logged in</span></div>
+        <div>Page: <span id="debugPage">home</span></div>
+        <div>Auction: <span id="debugAuction">None</span></div>
+    </div>
+
+    <!-- Success/Error Message Container -->
+    <div id="messageContainer" style="position: fixed; top: 20px; right: 20px; z-index: 1001; pointer-events: none;">
+        <!-- Messages will be dynamically added here -->
+    </div>
+
+    <script src="script.js"></script>
+    
+    <!-- Debug helper for development -->
+    <script>
+        // Show debug panel if in development
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            document.getElementById('debugPanel').style.display = 'block';
+            
+            // Update debug info
+            setInterval(() => {
+                document.getElementById('debugUser').textContent = currentUser ? currentUser.username : 'Not logged in';
+                document.getElementById('debugPage').textContent = document.querySelector('.page.active')?.id || 'unknown';
+                document.getElementById('debugAuction').textContent = currentAuction ? currentAuction.title : 'None';
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
