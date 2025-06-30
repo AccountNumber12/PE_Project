@@ -88,15 +88,22 @@ function setupEventListeners() {
         registerForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const username = document.getElementById('registerUsername').value.trim();
+            const displayName = document.getElementById('registerDisplayName').value.trim();
             const email = document.getElementById('registerEmail').value.trim();
             const password = document.getElementById('registerPassword').value;
+            const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
             
-            if (!username || !email || !password) {
+            if (!username || !displayName || !email || !password || !passwordConfirm) {
                 showMessage('Please fill in all fields', 'error');
                 return;
             }
             
-            await register(username, email, password);
+            if (password !== passwordConfirm) {
+                showMessage('Passwords do not match', 'error');
+                return;
+            }
+            
+            await register(username, displayName, email, password);
         });
     }
 
@@ -192,7 +199,7 @@ async function login(username, password) {
     }
 }
 
-async function register(username, email, password) {
+async function register(username, displayName, email, password) {
     try {
         const response = await fetch('/api/register', {
             method: 'POST',
@@ -200,7 +207,7 @@ async function register(username, email, password) {
                 'Content-Type': 'application/json',
             },
             credentials: 'include',
-            body: JSON.stringify({ username, email, password }),
+            body: JSON.stringify({ username, displayName, email, password }),
         });
 
         const data = await response.json();
@@ -238,8 +245,11 @@ async function logout() {
 function updateNavForLoggedInUser() {
     const navAuth = document.getElementById('navAuth');
     if (navAuth && currentUser) {
+        // Use displayName if available, fallback to username for compatibility
+        const displayText = currentUser.displayName || currentUser.username;
+        
         navAuth.innerHTML = `
-            <span>Welcome, ${escapeHtml(currentUser.username)}!</span>
+            <span>Welcome, ${escapeHtml(displayText)}!</span>
             <button onclick="showDashboard()">Dashboard</button>
             ${currentUser.isAdmin ? '<button onclick="showAdmin()">Admin</button>' : ''}
             <button onclick="logout()">Logout</button>
@@ -376,6 +386,9 @@ function displayAuctions(auctions) {
 
     grid.innerHTML = auctions.map(auction => {
         const imageUrl = (auction.images && auction.images.length > 0) ? auction.images[0] : '/placeholder.jpg';
+        // Use display name if available, fallback to username
+        const sellerDisplay = auction.seller.displayName || auction.seller.username;
+        
         return `
             <div class="auction-card" onclick="showAuctionDetail('${auction._id}')">
                 <img src="${imageUrl}" alt="${escapeHtml(auction.title)}" class="auction-image" onerror="this.src='/placeholder.jpg'">
@@ -384,7 +397,7 @@ function displayAuctions(auctions) {
                     <div class="auction-price">Current Bid: $${auction.currentBid.toFixed(2)}</div>
                     ${auction.hammerPrice ? `<div class="auction-buy-now">Buy Now: $${auction.hammerPrice.toFixed(2)}</div>` : ''}
                     <div class="auction-time">Ends: ${formatTimeRemaining(auction.endDate)}</div>
-                    <div class="auction-seller">Seller: ${escapeHtml(auction.seller.username)}</div>
+                    <div class="auction-seller">Seller: ${escapeHtml(sellerDisplay)}</div>
                 </div>
             </div>
         `;
@@ -426,6 +439,11 @@ function displayAuctionDetail(auction) {
     const isOwner = currentUser && currentUser.userId === auction.seller._id;
     const isAdmin = currentUser && currentUser.isAdmin;
     
+    // Use display names where available
+    const sellerDisplay = auction.seller.displayName || auction.seller.username;
+    const highestBidderDisplay = auction.highestBidder ? 
+        (auction.highestBidder.displayName || auction.highestBidder.username) : null;
+    
     container.innerHTML = `
         <button onclick="showHome()" class="btn btn-primary mb-1">← Back to Auctions</button>
         
@@ -448,12 +466,12 @@ function displayAuctionDetail(auction) {
             
             <div class="auction-details">
                 <h1>${escapeHtml(auction.title)}</h1>
-                <p><strong>Seller:</strong> ${escapeHtml(auction.seller.username)}</p>
+                <p><strong>Seller:</strong> ${escapeHtml(sellerDisplay)}</p>
                 <p><strong>Starting Price:</strong> $${auction.startingPrice.toFixed(2)}</p>
                 
                 <div class="current-bid" id="currentBid">
                     Current Bid: $${auction.currentBid.toFixed(2)}
-                    ${auction.highestBidder ? `<br><small>Highest Bidder: ${escapeHtml(auction.highestBidder.username)}</small>` : ''}
+                    ${highestBidderDisplay ? `<br><small>Highest Bidder: ${escapeHtml(highestBidderDisplay)}</small>` : ''}
                 </div>
                 
                 <p><strong>Time Remaining:</strong> <span id="timeRemaining">${timeRemaining}</span></p>
@@ -504,12 +522,15 @@ function displayAuctionDetail(auction) {
                     <div class="bid-history">
                         <h3>Bid History</h3>
                         <div class="bid-history-list">
-                            ${auction.bids.slice().reverse().slice(0, 10).map(bid => `
-                                <div class="bid-history-item">
-                                    <strong>${escapeHtml(bid.bidder.username)}</strong> bid $${bid.amount.toFixed(2)} 
-                                    <small>(${new Date(bid.timestamp).toLocaleString()})</small>
-                                </div>
-                            `).join('')}
+                            ${auction.bids.slice().reverse().slice(0, 10).map(bid => {
+                                const bidderDisplay = bid.bidder.displayName || bid.bidder.username;
+                                return `
+                                    <div class="bid-history-item">
+                                        <strong>${escapeHtml(bidderDisplay)}</strong> bid $${bid.amount.toFixed(2)} 
+                                        <small>(${new Date(bid.timestamp).toLocaleString()})</small>
+                                    </div>
+                                `;
+                            }).join('')}
                         </div>
                     </div>
                 ` : ''}
@@ -728,19 +749,26 @@ async function loadUserBids() {
             <h3>My Bid History (${validBids.length})</h3>
             ${validBids.length === 0 ? '<p>No bids yet.</p>' : `
                 <div class="dashboard-list">
-                    ${validBids.map(bid => `
-                        <div class="dashboard-item">
-                            <strong>${escapeHtml(bid.auction.title)}</strong><br>
-                            Your bid: $${bid.amount.toFixed(2)}<br>
-                            Current bid: $${bid.auction.currentBid.toFixed(2)}<br>
-                            Status: <span class="${bid.auction.isActive ? 'text-success' : 'text-danger'}">
-                                ${bid.auction.isActive ? 'Active' : 'Ended'}
-                            </span><br>
-                            ${bid.auction.isActive ? `Ends: ${formatTimeRemaining(bid.auction.endDate)}<br>` : ''}
-                            <small>Bid placed: ${new Date(bid.timestamp).toLocaleString()}</small><br>
-                            <button onclick="showAuctionDetail('${bid.auction._id}')" class="btn btn-primary mt-1">View Auction</button>
-                        </div>
-                    `).join('')}
+                    ${validBids.map(bid => {
+                        // Use display name if available
+                        const sellerDisplay = bid.auction.seller ? 
+                            (bid.auction.seller.displayName || bid.auction.seller.username) : 'Unknown';
+                        
+                        return `
+                            <div class="dashboard-item">
+                                <strong>${escapeHtml(bid.auction.title)}</strong><br>
+                                Seller: ${escapeHtml(sellerDisplay)}<br>
+                                Your bid: $${bid.amount.toFixed(2)}<br>
+                                Current bid: $${bid.auction.currentBid.toFixed(2)}<br>
+                                Status: <span class="${bid.auction.isActive ? 'text-success' : 'text-danger'}">
+                                    ${bid.auction.isActive ? 'Active' : 'Ended'}
+                                </span><br>
+                                ${bid.auction.isActive ? `Ends: ${formatTimeRemaining(bid.auction.endDate)}<br>` : ''}
+                                <small>Bid placed: ${new Date(bid.timestamp).toLocaleString()}</small><br>
+                                <button onclick="showAuctionDetail('${bid.auction._id}')" class="btn btn-primary mt-1">View Auction</button>
+                            </div>
+                        `;
+                    }).join('')}
                 </div>
             `}
         `;
@@ -774,26 +802,32 @@ async function loadUserListings() {
             <h3>My Listings (${listings.length})</h3>
             ${listings.length === 0 ? '<p>No listings yet.</p>' : `
                 <div class="dashboard-list">
-                    ${listings.map(listing => `
-                        <div class="dashboard-item">
-                            <strong>${escapeHtml(listing.title)}</strong><br>
-                            Starting price: $${listing.startingPrice.toFixed(2)}<br>
-                            Current bid: $${listing.currentBid.toFixed(2)}<br>
-                            ${listing.highestBidder ? `Highest bidder: ${escapeHtml(listing.highestBidder.username)}<br>` : 'No bids yet<br>'}
-                            Status: <span class="${listing.isActive ? 'text-success' : 'text-danger'}">
-                                ${listing.isActive ? 'Active' : 'Ended'}
-                            </span><br>
-                            ${listing.isActive ? `Ends: ${formatTimeRemaining(listing.endDate)}<br>` : ''}
-                            Images: ${listing.images ? listing.images.length : 0}<br>
-                            <small>Created: ${new Date(listing.createdAt).toLocaleString()}</small><br>
-                            <div class="listing-actions">
-                                <button onclick="showAuctionDetail('${listing._id}')" class="btn btn-primary mt-1">View</button>
-                                ${listing.isActive ? `
-                                    <button onclick="endAuctionEarly('${listing._id}')" class="btn btn-warning mt-1" title="End early: Winner chosen if bids exist, deleted if no bids">End Early</button>
-                                ` : ''}
+                    ${listings.map(listing => {
+                        // Use display name for highest bidder if available
+                        const bidderDisplay = listing.highestBidder ? 
+                            (listing.highestBidder.displayName || listing.highestBidder.username) : null;
+                        
+                        return `
+                            <div class="dashboard-item">
+                                <strong>${escapeHtml(listing.title)}</strong><br>
+                                Starting price: $${listing.startingPrice.toFixed(2)}<br>
+                                Current bid: $${listing.currentBid.toFixed(2)}<br>
+                                ${bidderDisplay ? `Highest bidder: ${escapeHtml(bidderDisplay)}<br>` : 'No bids yet<br>'}
+                                Status: <span class="${listing.isActive ? 'text-success' : 'text-danger'}">
+                                    ${listing.isActive ? 'Active' : 'Ended'}
+                                </span><br>
+                                ${listing.isActive ? `Ends: ${formatTimeRemaining(listing.endDate)}<br>` : ''}
+                                Images: ${listing.images ? listing.images.length : 0}<br>
+                                <small>Created: ${new Date(listing.createdAt).toLocaleString()}</small><br>
+                                <div class="listing-actions">
+                                    <button onclick="showAuctionDetail('${listing._id}')" class="btn btn-primary mt-1">View</button>
+                                    ${listing.isActive ? `
+                                        <button onclick="endAuctionEarly('${listing._id}')" class="btn btn-warning mt-1" title="End early: Winner chosen if bids exist, deleted if no bids">End Early</button>
+                                    ` : ''}
+                                </div>
                             </div>
-                        </div>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </div>
             `}
         `;
@@ -830,22 +864,29 @@ async function loadAdminData() {
         content.innerHTML = `
             <h3>All Auctions (${auctions.length})</h3>
             <div class="admin-auctions">
-                ${auctions.map(auction => `
-                    <div class="admin-item">
-                        <strong>${escapeHtml(auction.title)}</strong><br>
-                        Seller: ${escapeHtml(auction.seller.username)}<br>
-                        Current bid: $${auction.currentBid.toFixed(2)}<br>
-                        ${auction.highestBidder ? `Highest bidder: ${escapeHtml(auction.highestBidder.username)}<br>` : 'No bids<br>'}
-                        Status: <span class="${auction.isActive ? 'text-success' : 'text-danger'}">
-                            ${auction.isActive ? 'Active' : 'Ended'}
-                        </span><br>
-                        Created: ${new Date(auction.createdAt).toLocaleString()}<br>
-                        <div class="admin-actions">
-                            <button onclick="showAuctionDetail('${auction._id}')" class="btn btn-primary">View</button>
-                            <button onclick="deleteAuction('${auction._id}')" class="btn btn-danger">Delete</button>
+                ${auctions.map(auction => {
+                    // Use display names where available
+                    const sellerDisplay = auction.seller.displayName || auction.seller.username;
+                    const bidderDisplay = auction.highestBidder ? 
+                        (auction.highestBidder.displayName || auction.highestBidder.username) : null;
+                    
+                    return `
+                        <div class="admin-item">
+                            <strong>${escapeHtml(auction.title)}</strong><br>
+                            Seller: ${escapeHtml(sellerDisplay)} (${escapeHtml(auction.seller.username)})<br>
+                            Current bid: $${auction.currentBid.toFixed(2)}<br>
+                            ${bidderDisplay ? `Highest bidder: ${escapeHtml(bidderDisplay)} (${escapeHtml(auction.highestBidder.username)})<br>` : 'No bids<br>'}
+                            Status: <span class="${auction.isActive ? 'text-success' : 'text-danger'}">
+                                ${auction.isActive ? 'Active' : 'Ended'}
+                            </span><br>
+                            Created: ${new Date(auction.createdAt).toLocaleString()}<br>
+                            <div class="admin-actions">
+                                <button onclick="showAuctionDetail('${auction._id}')" class="btn btn-primary">View</button>
+                                <button onclick="deleteAuction('${auction._id}')" class="btn btn-danger">Delete</button>
+                            </div>
                         </div>
-                    </div>
-                `).join('')}
+                    `;
+                }).join('')}
             </div>
         `;
     } catch (error) {
@@ -944,9 +985,11 @@ function updateBidDisplay(data) {
         const minimumBidEl = document.getElementById('minimumBid');
         
         if (currentBidEl) {
+            // Use display name for the highest bidder display
+            const bidderDisplay = data.highestBidderDisplay || data.highestBidder;
             currentBidEl.innerHTML = `
                 Current Bid: $${data.currentBid.toFixed(2)}
-                <br><small>Highest Bidder: ${escapeHtml(data.highestBidder)}</small>
+                <br><small>Highest Bidder: ${escapeHtml(bidderDisplay)}</small>
             `;
         }
         
@@ -1046,7 +1089,8 @@ async function searchAuctions() {
         const filteredAuctions = auctions.filter(auction => 
             auction.title.toLowerCase().includes(searchTerm) ||
             auction.description.toLowerCase().includes(searchTerm) ||
-            auction.seller.username.toLowerCase().includes(searchTerm)
+            auction.seller.username.toLowerCase().includes(searchTerm) ||
+            (auction.seller.displayName && auction.seller.displayName.toLowerCase().includes(searchTerm))
         );
         
         displayAuctions(filteredAuctions);
