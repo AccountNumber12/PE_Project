@@ -67,6 +67,22 @@ const userSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+// Notification Schema
+const notificationSchema = new mongoose.Schema({
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    type: { 
+        type: String, 
+        required: true,
+        enum: ['outbid', 'auction_won', 'buy_now_purchase', 'auction_ended_seller']
+    },
+    title: { type: String, required: true },
+    message: { type: String, required: true },
+    auctionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Auction', required: true },
+    auctionTitle: { type: String, required: true },
+    isRead: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now }
+});
+
 // Auction Item Schema
 const auctionSchema = new mongoose.Schema({
     title: { type: String, required: true },
@@ -97,8 +113,42 @@ const bidSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model('User', userSchema);
+const Notification = mongoose.model('Notification', notificationSchema);
 const Auction = mongoose.model('Auction', auctionSchema);
 const Bid = mongoose.model('Bid', bidSchema);
+
+// Helper function to create notifications
+async function createNotification(userId, type, title, message, auctionId, auctionTitle) {
+    try {
+        const notification = new Notification({
+            user: userId,
+            type,
+            title,
+            message,
+            auctionId,
+            auctionTitle
+        });
+        
+        await notification.save();
+        
+        // Emit real-time notification
+        io.to(`user_${userId}`).emit('newNotification', {
+            id: notification._id,
+            type,
+            title,
+            message,
+            auctionId,
+            auctionTitle,
+            isRead: false,
+            createdAt: notification.createdAt
+        });
+        
+        console.log(`[NOTIFICATION] Created ${type} notification for user ${userId}: ${title}`);
+        return notification;
+    } catch (error) {
+        console.error('[NOTIFICATION] Error creating notification:', error);
+    }
+}
 
 // Auto-create single admin account from .env on startup
 async function createAdminFromEnv() {
@@ -435,6 +485,67 @@ app.get('/api/auth-status', (req, res) => {
     }
 });
 
+// Notification routes
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+    try {
+        const notifications = await Notification.find({ user: req.user.userId })
+            .sort({ createdAt: -1 })
+            .limit(50);
+        
+        res.json(notifications);
+    } catch (error) {
+        console.error('[NOTIFICATION] Error loading notifications:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+app.put('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+    try {
+        const notification = await Notification.findOneAndUpdate(
+            { _id: req.params.id, user: req.user.userId },
+            { isRead: true },
+            { new: true }
+        );
+        
+        if (!notification) {
+            return res.status(404).json({ message: 'Notification not found' });
+        }
+        
+        res.json(notification);
+    } catch (error) {
+        console.error('[NOTIFICATION] Error marking notification as read:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+app.put('/api/notifications/mark-all-read', authenticateToken, async (req, res) => {
+    try {
+        await Notification.updateMany(
+            { user: req.user.userId, isRead: false },
+            { isRead: true }
+        );
+        
+        res.json({ message: 'All notifications marked as read' });
+    } catch (error) {
+        console.error('[NOTIFICATION] Error marking all notifications as read:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+app.get('/api/notifications/unread-count', authenticateToken, async (req, res) => {
+    try {
+        const count = await Notification.countDocuments({ 
+            user: req.user.userId, 
+            isRead: false 
+        });
+        
+        res.json({ count });
+    } catch (error) {
+        console.error('[NOTIFICATION] Error getting unread count:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
 // Auction routes
 app.get('/api/auctions', async (req, res) => {
     try {
@@ -579,6 +690,9 @@ app.post('/api/auctions/:id/bid', authenticateToken, async (req, res) => {
             });
         }
 
+        // Store previous highest bidder for notification
+        const previousHighestBidder = auction.highestBidder;
+
         // Update auction
         auction.currentBid = amount;
         auction.highestBidder = userId;
@@ -596,6 +710,18 @@ app.post('/api/auctions/:id/bid', authenticateToken, async (req, res) => {
             amount: amount
         });
         await bid.save();
+
+        // Create notification for previous highest bidder (outbid notification)
+        if (previousHighestBidder && previousHighestBidder.toString() !== userId) {
+            await createNotification(
+                previousHighestBidder,
+                'outbid',
+                'You have been outbid!',
+                `Someone has placed a higher bid of $${amount.toFixed(2)} on "${auction.title}". Place a new bid to stay in the game!`,
+                auctionId,
+                auction.title
+            );
+        }
 
         // Emit socket event for real-time updates with display name
         io.emit('bidUpdate', {
@@ -650,6 +776,26 @@ app.post('/api/auctions/:id/buy-now', authenticateToken, async (req, res) => {
             amount: auction.hammerPrice
         });
         await bid.save();
+
+        // Create notification for seller (buy now purchase)
+        await createNotification(
+            auction.seller,
+            'buy_now_purchase',
+            'Your item was purchased!',
+            `${req.user.displayName || req.user.username} purchased "${auction.title}" using Buy Now for $${auction.hammerPrice.toFixed(2)}!`,
+            auctionId,
+            auction.title
+        );
+
+        // Create notification for buyer (auction won)
+        await createNotification(
+            userId,
+            'auction_won',
+            'Congratulations! You won an auction!',
+            `You successfully purchased "${auction.title}" for $${auction.hammerPrice.toFixed(2)} using Buy Now!`,
+            auctionId,
+            auction.title
+        );
 
         // Emit socket event with display name
         io.emit('auctionEnded', {
@@ -755,6 +901,11 @@ async function completelyDeleteAuction(auctionId, reason = 'Deleted') {
         console.log('[DELETE] Deleting related bids...');
         const bidDeleteResult = await Bid.deleteMany({ auction: auctionId });
         console.log(`[DELETE] Deleted ${bidDeleteResult.deletedCount} bids`);
+        
+        // Delete all related notifications
+        console.log('[DELETE] Deleting related notifications...');
+        const notificationDeleteResult = await Notification.deleteMany({ auctionId: auctionId });
+        console.log(`[DELETE] Deleted ${notificationDeleteResult.deletedCount} notifications`);
         
         // Delete the auction itself
         console.log('[DELETE] Deleting auction from database...');
@@ -888,6 +1039,26 @@ app.post('/api/auctions/:id/end-early', authenticateToken, async (req, res) => {
             const winnerDisplay = auction.highestBidder.displayName || auction.highestBidder.username;
             message = `Auction ended early by seller. Winner: ${winnerDisplay} with bid of $${auction.currentBid.toFixed(2)}`;
             
+            // Create notification for winner
+            await createNotification(
+                auction.highestBidder._id,
+                'auction_won',
+                'Congratulations! You won an auction!',
+                `You won "${auction.title}" with your bid of $${auction.currentBid.toFixed(2)}! The seller ended the auction early.`,
+                auctionId,
+                auction.title
+            );
+            
+            // Create notification for seller
+            await createNotification(
+                auction.seller,
+                'auction_ended_seller',
+                'Your auction has ended',
+                `Your auction "${auction.title}" has ended early with winner ${winnerDisplay} at $${auction.currentBid.toFixed(2)}.`,
+                auctionId,
+                auction.title
+            );
+            
             // Emit socket event for early end with winner
             io.emit('auctionEndedEarly', {
                 auctionId,
@@ -899,6 +1070,7 @@ app.post('/api/auctions/:id/end-early', authenticateToken, async (req, res) => {
             // No bidders - delete the auction
             await Auction.findByIdAndDelete(auctionId);
             await Bid.deleteMany({ auction: auctionId });
+            await Notification.deleteMany({ auctionId: auctionId });
             
             message = 'Auction deleted - no bidders found';
             
@@ -919,6 +1091,12 @@ app.post('/api/auctions/:id/end-early', authenticateToken, async (req, res) => {
 // Socket.io for real-time updates
 io.on('connection', (socket) => {
     console.log('[SOCKET] User connected:', socket.id);
+
+    // Join user to their personal room for notifications
+    socket.on('joinUser', (userId) => {
+        socket.join(`user_${userId}`);
+        console.log(`[SOCKET] User ${socket.id} joined personal room user_${userId}`);
+    });
 
     socket.on('joinAuction', (auctionId) => {
         socket.join(`auction_${auctionId}`);
@@ -952,6 +1130,31 @@ const auctionExpiryChecker = setInterval(async () => {
             const winnerMessage = auction.highestBidder 
                 ? `Winner: ${winnerDisplay}`
                 : 'No winner - no bids placed';
+            
+            // Create notifications for auction end
+            if (auction.highestBidder) {
+                // Notify winner
+                await createNotification(
+                    auction.highestBidder._id,
+                    'auction_won',
+                    'Congratulations! You won an auction!',
+                    `You won "${auction.title}" with your bid of $${auction.currentBid.toFixed(2)}!`,
+                    auction._id,
+                    auction.title
+                );
+            }
+            
+            // Notify seller
+            await createNotification(
+                auction.seller,
+                'auction_ended_seller',
+                'Your auction has ended',
+                auction.highestBidder 
+                    ? `Your auction "${auction.title}" has ended with winner ${winnerDisplay} at $${auction.currentBid.toFixed(2)}.`
+                    : `Your auction "${auction.title}" has ended with no bids.`,
+                auction._id,
+                auction.title
+            );
             
             io.emit('auctionEnded', {
                 auctionId: auction._id,
