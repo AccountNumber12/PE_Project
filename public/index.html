@@ -198,6 +198,24 @@
         </div>
     </div>
 
+    <!-- Notification Modal -->
+    <div id="notificationModal" class="modal">
+        <div class="modal-content notification-modal-content">
+            <div class="notification-header">
+                <h2>Notifications</h2>
+                <div class="notification-actions">
+                    <button onclick="markAllNotificationsRead()" class="btn-link">Mark all as read</button>
+                    <span class="close" onclick="hideNotifications()">&times;</span>
+                </div>
+            </div>
+            <div id="notificationsList" class="notifications-list">
+                <div class="loading-message" style="text-align: center; padding: 2rem; color: #6c757d;">
+                    Loading notifications...
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Debug Panel (only visible in development) -->
     <div id="debugPanel" style="position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 0.5rem; border-radius: 4px; font-size: 0.8rem; display: none; z-index: 1000;">
         <div>User: <span id="debugUser">Not logged in</span></div>

@@ -1,6 +1,8 @@
 const socket = io();
 let currentUser = null;
 let currentAuction = null;
+let notifications = [];
+let unreadCount = 0;
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', function() {
@@ -48,6 +50,11 @@ function setupSocketListeners() {
         }
     });
 
+    // Notification socket listeners
+    socket.on('newNotification', (notification) => {
+        handleNewNotification(notification);
+    });
+
     // Handle connection errors
     socket.on('connect_error', (error) => {
         console.error('[SOCKET] Connection error:', error);
@@ -56,11 +63,184 @@ function setupSocketListeners() {
 
     socket.on('connect', () => {
         console.log('[SOCKET] Connected to server');
+        // Join user room if logged in
+        if (currentUser) {
+            socket.emit('joinUser', currentUser.userId);
+        }
     });
 
     socket.on('disconnect', () => {
         console.log('[SOCKET] Disconnected from server');
     });
+}
+
+// Notification functions
+function handleNewNotification(notification) {
+    console.log('[NOTIFICATION] Received new notification:', notification);
+    notifications.unshift(notification);
+    unreadCount++;
+    updateNotificationBadge();
+    showMessage(notification.title, 'success');
+}
+
+async function loadNotifications() {
+    if (!currentUser) return;
+    
+    try {
+        const response = await fetch('/api/notifications', {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            notifications = await response.json();
+            updateNotificationDisplay();
+        }
+    } catch (error) {
+        console.error('[NOTIFICATION] Error loading notifications:', error);
+    }
+}
+
+async function loadUnreadCount() {
+    if (!currentUser) return;
+    
+    try {
+        const response = await fetch('/api/notifications/unread-count', {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            unreadCount = data.count;
+            updateNotificationBadge();
+        }
+    } catch (error) {
+        console.error('[NOTIFICATION] Error loading unread count:', error);
+    }
+}
+
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    if (badge) {
+        if (unreadCount > 0) {
+            badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+            badge.style.display = 'block';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+}
+
+function updateNotificationDisplay() {
+    const container = document.getElementById('notificationsList');
+    if (!container) return;
+    
+    if (notifications.length === 0) {
+        container.innerHTML = '<div class="no-notifications">No notifications yet</div>';
+        return;
+    }
+    
+    container.innerHTML = notifications.map(notification => {
+        const timeAgo = formatTimeAgo(notification.createdAt);
+        const typeIcon = getNotificationIcon(notification.type);
+        
+        return `
+            <div class="notification-item ${notification.isRead ? 'read' : 'unread'}" 
+                 onclick="handleNotificationClick('${notification._id}', '${notification.auctionId}')"
+                 data-id="${notification._id}">
+                <div class="notification-icon">${typeIcon}</div>
+                <div class="notification-content">
+                    <div class="notification-title">${escapeHtml(notification.title)}</div>
+                    <div class="notification-message">${escapeHtml(notification.message)}</div>
+                    <div class="notification-time">${timeAgo}</div>
+                </div>
+                ${!notification.isRead ? '<div class="notification-unread-dot"></div>' : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function getNotificationIcon(type) {
+    switch (type) {
+        case 'outbid': return '⚡';
+        case 'auction_won': return '🏆';
+        case 'buy_now_purchase': return '💰';
+        case 'auction_ended_seller': return '📝';
+        default: return '🔔';
+    }
+}
+
+function formatTimeAgo(dateString) {
+    const now = new Date();
+    const date = new Date(dateString);
+    const diffInSeconds = Math.floor((now - date) / 1000);
+    
+    if (diffInSeconds < 60) return 'Just now';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+    if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)}d ago`;
+    return date.toLocaleDateString();
+}
+
+async function handleNotificationClick(notificationId, auctionId) {
+    // Mark as read
+    try {
+        const response = await fetch(`/api/notifications/${notificationId}/read`, {
+            method: 'PUT',
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            // Update local notification state
+            const notification = notifications.find(n => n._id === notificationId);
+            if (notification && !notification.isRead) {
+                notification.isRead = true;
+                unreadCount = Math.max(0, unreadCount - 1);
+                updateNotificationBadge();
+                updateNotificationDisplay();
+            }
+        }
+    } catch (error) {
+        console.error('[NOTIFICATION] Error marking as read:', error);
+    }
+    
+    // Close notification modal and navigate to auction
+    hideNotifications();
+    showAuctionDetail(auctionId);
+}
+
+async function markAllNotificationsRead() {
+    try {
+        const response = await fetch('/api/notifications/mark-all-read', {
+            method: 'PUT',
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            notifications.forEach(n => n.isRead = true);
+            unreadCount = 0;
+            updateNotificationBadge();
+            updateNotificationDisplay();
+            showMessage('All notifications marked as read', 'success');
+        }
+    } catch (error) {
+        console.error('[NOTIFICATION] Error marking all as read:', error);
+        showMessage('Failed to mark notifications as read', 'error');
+    }
+}
+
+function showNotifications() {
+    loadNotifications();
+    const modal = document.getElementById('notificationModal');
+    if (modal) {
+        modal.style.display = 'block';
+    }
+}
+
+function hideNotifications() {
+    const modal = document.getElementById('notificationModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
 }
 
 // Event listeners
@@ -120,11 +300,16 @@ function setupEventListeners() {
     window.addEventListener('click', (e) => {
         const loginModal = document.getElementById('loginModal');
         const registerModal = document.getElementById('registerModal');
+        const notificationModal = document.getElementById('notificationModal');
+        
         if (e.target === loginModal) {
             hideLogin();
         }
         if (e.target === registerModal) {
             hideRegister();
+        }
+        if (e.target === notificationModal) {
+            hideNotifications();
         }
     });
 
@@ -160,6 +345,9 @@ async function checkAuthStatus() {
             currentUser = data.user;
             console.log('[AUTH] User authenticated:', currentUser);
             updateNavForLoggedInUser();
+            // Join user socket room and load notifications
+            socket.emit('joinUser', currentUser.userId);
+            loadUnreadCount();
         } else {
             console.log('[AUTH] User not authenticated');
             currentUser = null;
@@ -190,6 +378,9 @@ async function login(username, password) {
             updateNavForLoggedInUser();
             hideLogin();
             showMessage('Login successful!', 'success');
+            // Join user socket room and load notifications
+            socket.emit('joinUser', currentUser.userId);
+            loadUnreadCount();
         } else {
             showMessage(data.message || 'Login failed', 'error');
         }
@@ -217,6 +408,9 @@ async function register(username, displayName, email, password) {
             updateNavForLoggedInUser();
             hideRegister();
             showMessage('Registration successful!', 'success');
+            // Join user socket room
+            socket.emit('joinUser', currentUser.userId);
+            loadUnreadCount();
         } else {
             showMessage(data.message || 'Registration failed', 'error');
         }
@@ -233,6 +427,8 @@ async function logout() {
             credentials: 'include'
         });
         currentUser = null;
+        notifications = [];
+        unreadCount = 0;
         updateNavForLoggedOutUser();
         showHome();
         showMessage('Logged out successfully', 'success');
@@ -249,6 +445,10 @@ function updateNavForLoggedInUser() {
         const displayText = currentUser.displayName || currentUser.username;
         
         navAuth.innerHTML = `
+            <div class="nav-notification" onclick="showNotifications()">
+                <span class="notification-bell">🔔</span>
+                <span id="notificationBadge" class="notification-badge" style="display: none;">0</span>
+            </div>
             <span>Welcome, ${escapeHtml(displayText)}!</span>
             <button onclick="showDashboard()">Dashboard</button>
             ${currentUser.isAdmin ? '<button onclick="showAdmin()">Admin</button>' : ''}
