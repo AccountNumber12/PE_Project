@@ -57,85 +57,10 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && proce
     console.log('[WARNING] Cloudinary credentials not found - image uploads will be skipped');
 }
 
-// Auto-create single admin account from .env on startup
-async function createAdminFromEnv() {
-    try {
-        console.log('[ADMIN] Checking for admin credentials...');
-        
-        if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
-            console.log('[ADMIN] No admin credentials found in environment variables');
-            console.log('[ADMIN] Add ADMIN_USERNAME and ADMIN_PASSWORD to your environment variables');
-            return;
-        }
-        
-        console.log('[ADMIN] Found admin credentials in environment');
-        console.log('[ADMIN] Username:', process.env.ADMIN_USERNAME);
-        
-        const existingAdmin = await User.findOne({ username: process.env.ADMIN_USERNAME });
-        if (existingAdmin) {
-            console.log('[ADMIN] Admin account already exists in database');
-            console.log('[ADMIN] Admin status:', existingAdmin.isAdmin);
-            
-            // Make sure they have admin privileges
-            if (!existingAdmin.isAdmin) {
-                existingAdmin.isAdmin = true;
-                await existingAdmin.save();
-                console.log('[ADMIN] Updated existing user to admin');
-            }
-            return;
-        }
-        
-        console.log('[ADMIN] Creating new admin account...');
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD, salt);
-        
-        const adminUser = new User({
-            username: process.env.ADMIN_USERNAME,
-            email: `${process.env.ADMIN_USERNAME}@vgvault.local`,
-            password: hashedPassword,
-            isAdmin: true
-        });
-        
-        await adminUser.save();
-        console.log('[ADMIN] Admin account created successfully!');
-        console.log('[ADMIN] You can now login with your credentials');
-        
-    } catch (error) {
-        console.error('[ADMIN] Error creating admin:', error.message);
-    }
-}
-
-// MongoDB connection with better error handling
-const connectDB = async () => {
-    try {
-        const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/vgvault';
-        console.log('[DATABASE] Connecting to MongoDB...');
-        
-        await mongoose.connect(mongoURI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
-        
-        console.log('[DATABASE] Connected to MongoDB successfully');
-        
-        // Create admin after database connection
-        await createAdminFromEnv();
-        
-    } catch (error) {
-        console.error('[DATABASE] MongoDB connection error:', error);
-        // Don't exit in production, just log the error
-        if (process.env.NODE_ENV !== 'production') {
-            process.exit(1);
-        }
-    }
-};
-
-// Connect to database
-connectDB();
-
 // User Schema
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
+    displayName: { type: String, required: true }, // New field for display name
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     isAdmin: { type: Boolean, default: false },
@@ -174,6 +99,131 @@ const bidSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 const Auction = mongoose.model('Auction', auctionSchema);
 const Bid = mongoose.model('Bid', bidSchema);
+
+// Auto-create single admin account from .env on startup
+async function createAdminFromEnv() {
+    try {
+        console.log('[ADMIN] Checking for admin credentials...');
+        
+        if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
+            console.log('[ADMIN] No admin credentials found in environment variables');
+            console.log('[ADMIN] Add ADMIN_USERNAME and ADMIN_PASSWORD to your environment variables');
+            return;
+        }
+        
+        console.log('[ADMIN] Found admin credentials in environment');
+        console.log('[ADMIN] Username:', process.env.ADMIN_USERNAME);
+        
+        const existingAdmin = await User.findOne({ username: process.env.ADMIN_USERNAME });
+        if (existingAdmin) {
+            console.log('[ADMIN] Admin account already exists in database');
+            console.log('[ADMIN] Admin status:', existingAdmin.isAdmin);
+            
+            // Make sure they have admin privileges and display name
+            let updated = false;
+            if (!existingAdmin.isAdmin) {
+                existingAdmin.isAdmin = true;
+                updated = true;
+                console.log('[ADMIN] Updated existing user to admin');
+            }
+            if (!existingAdmin.displayName) {
+                existingAdmin.displayName = existingAdmin.username;
+                updated = true;
+                console.log('[ADMIN] Added display name to existing admin');
+            }
+            if (updated) {
+                await existingAdmin.save();
+            }
+            return;
+        }
+        
+        console.log('[ADMIN] Creating new admin account...');
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD, salt);
+        
+        const adminUser = new User({
+            username: process.env.ADMIN_USERNAME,
+            displayName: process.env.ADMIN_DISPLAY_NAME || process.env.ADMIN_USERNAME, // Use display name from env or fallback to username
+            email: `${process.env.ADMIN_USERNAME}@vgvault.local`,
+            password: hashedPassword,
+            isAdmin: true
+        });
+        
+        await adminUser.save();
+        console.log('[ADMIN] Admin account created successfully!');
+        console.log('[ADMIN] Display name:', adminUser.displayName);
+        console.log('[ADMIN] You can now login with your credentials');
+        
+    } catch (error) {
+        console.error('[ADMIN] Error creating admin:', error.message);
+    }
+}
+
+// Migration function to add display names to existing users
+async function migrateExistingUsers() {
+    try {
+        console.log('[MIGRATION] Checking for users without display names...');
+        
+        // Find users without displayName field
+        const usersWithoutDisplayName = await User.find({ 
+            $or: [
+                { displayName: { $exists: false } },
+                { displayName: null },
+                { displayName: '' }
+            ]
+        });
+        
+        if (usersWithoutDisplayName.length === 0) {
+            console.log('[MIGRATION] All users already have display names');
+            return;
+        }
+        
+        console.log(`[MIGRATION] Found ${usersWithoutDisplayName.length} users without display names`);
+        
+        // Update each user to have their username as their display name
+        for (const user of usersWithoutDisplayName) {
+            user.displayName = user.username;
+            await user.save();
+            console.log(`[MIGRATION] Updated user ${user.username} with display name: ${user.displayName}`);
+        }
+        
+        console.log('[MIGRATION] Migration completed successfully');
+        
+    } catch (error) {
+        console.error('[MIGRATION] Error during user migration:', error.message);
+    }
+}
+
+// MongoDB connection with better error handling
+const connectDB = async () => {
+    try {
+        const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/vgvault';
+        console.log('[DATABASE] Connecting to MongoDB...');
+        
+        await mongoose.connect(mongoURI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
+        
+        console.log('[DATABASE] Connected to MongoDB successfully');
+        
+        // Create admin after database connection
+        await createAdminFromEnv();
+        
+        // Migrate existing users to have display names
+        await migrateExistingUsers();
+        
+    } catch (error) {
+        console.error('[DATABASE] MongoDB connection error:', error);
+        // Don't exit in production, just log the error
+        if (process.env.NODE_ENV !== 'production') {
+            process.exit(1);
+        }
+    }
+};
+
+// Connect to database
+connectDB();
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -234,10 +284,10 @@ app.get('/', (req, res) => {
 // Authentication routes
 app.post('/api/register', async (req, res) => {
     try {
-        const { username, email, password } = req.body;
+        const { username, displayName, email, password } = req.body;
         
         // Validate input
-        if (!username || !email || !password) {
+        if (!username || !displayName || !email || !password) {
             return res.status(400).json({ message: 'All fields are required' });
         }
         
@@ -254,6 +304,7 @@ app.post('/api/register', async (req, res) => {
         // Create user
         const user = new User({
             username,
+            displayName,
             email,
             password: hashedPassword
         });
@@ -262,7 +313,12 @@ app.post('/api/register', async (req, res) => {
 
         // Create token
         const token = jwt.sign(
-            { userId: user._id, username: user.username, isAdmin: user.isAdmin },
+            { 
+                userId: user._id, 
+                username: user.username, 
+                displayName: user.displayName,
+                isAdmin: user.isAdmin 
+            },
             process.env.JWT_SECRET || 'fallback_secret_change_in_production',
             { expiresIn: '24h' }
         );
@@ -273,7 +329,14 @@ app.post('/api/register', async (req, res) => {
             secure: process.env.NODE_ENV === 'production',
             sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
         });
-        res.json({ message: 'User created successfully', user: { username: user.username, isAdmin: user.isAdmin } });
+        res.json({ 
+            message: 'User created successfully', 
+            user: { 
+                username: user.username, 
+                displayName: user.displayName,
+                isAdmin: user.isAdmin 
+            } 
+        });
     } catch (error) {
         console.error('[AUTH] Registration error:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
@@ -308,9 +371,14 @@ app.post('/api/login', async (req, res) => {
 
         console.log('[AUTH] Password valid');
 
-        // Create token
+        // Create token with display name
         const token = jwt.sign(
-            { userId: user._id, username: user.username, isAdmin: user.isAdmin },
+            { 
+                userId: user._id, 
+                username: user.username, 
+                displayName: user.displayName,
+                isAdmin: user.isAdmin 
+            },
             process.env.JWT_SECRET || 'fallback_secret_change_in_production',
             { expiresIn: '24h' }
         );
@@ -323,9 +391,16 @@ app.post('/api/login', async (req, res) => {
             secure: process.env.NODE_ENV === 'production',
             sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
         });
-        res.json({ message: 'Login successful', user: { username: user.username, isAdmin: user.isAdmin } });
+        res.json({ 
+            message: 'Login successful', 
+            user: { 
+                username: user.username, 
+                displayName: user.displayName,
+                isAdmin: user.isAdmin 
+            } 
+        });
         
-        console.log('[AUTH] Login successful for:', username, '(Admin:', user.isAdmin, ')');
+        console.log('[AUTH] Login successful for:', username, '(Display:', user.displayName, ', Admin:', user.isAdmin, ')');
     } catch (error) {
         console.error('[AUTH] Login error:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
@@ -349,7 +424,8 @@ app.get('/api/auth-status', (req, res) => {
         res.json({ 
             authenticated: true, 
             user: { 
-                username: verified.username, 
+                username: verified.username,
+                displayName: verified.displayName, 
                 isAdmin: verified.isAdmin,
                 userId: verified.userId 
             } 
@@ -363,8 +439,8 @@ app.get('/api/auth-status', (req, res) => {
 app.get('/api/auctions', async (req, res) => {
     try {
         const auctions = await Auction.find({ isActive: true })
-            .populate('seller', 'username')
-            .populate('highestBidder', 'username')
+            .populate('seller', 'username displayName')
+            .populate('highestBidder', 'username displayName')
             .sort({ createdAt: -1 })
             .limit(100); // Limit for performance
         res.json(auctions);
@@ -377,9 +453,9 @@ app.get('/api/auctions', async (req, res) => {
 app.get('/api/auctions/:id', async (req, res) => {
     try {
         const auction = await Auction.findById(req.params.id)
-            .populate('seller', 'username')
-            .populate('highestBidder', 'username')
-            .populate('bids.bidder', 'username');
+            .populate('seller', 'username displayName')
+            .populate('highestBidder', 'username displayName')
+            .populate('bids.bidder', 'username displayName');
         
         if (!auction) {
             return res.status(404).json({ message: 'Auction not found' });
@@ -521,11 +597,12 @@ app.post('/api/auctions/:id/bid', authenticateToken, async (req, res) => {
         });
         await bid.save();
 
-        // Emit socket event for real-time updates
+        // Emit socket event for real-time updates with display name
         io.emit('bidUpdate', {
             auctionId,
             currentBid: amount,
-            highestBidder: req.user.username
+            highestBidder: req.user.username, // Keep for compatibility
+            highestBidderDisplay: req.user.displayName || req.user.username // New field for display
         });
 
         res.json({ message: 'Bid placed successfully', currentBid: amount });
@@ -574,10 +651,10 @@ app.post('/api/auctions/:id/buy-now', authenticateToken, async (req, res) => {
         });
         await bid.save();
 
-        // Emit socket event
+        // Emit socket event with display name
         io.emit('auctionEnded', {
             auctionId,
-            winner: req.user.username,
+            winner: req.user.displayName || req.user.username,
             finalPrice: auction.hammerPrice
         });
 
@@ -594,7 +671,14 @@ app.get('/api/user/bids', authenticateToken, async (req, res) => {
         const userId = req.user.userId;
         
         const bids = await Bid.find({ bidder: userId })
-            .populate('auction', 'title currentBid isActive endDate')
+            .populate({
+                path: 'auction',
+                select: 'title currentBid isActive endDate seller',
+                populate: {
+                    path: 'seller',
+                    select: 'username displayName'
+                }
+            })
             .sort({ timestamp: -1 })
             .limit(50); // Limit for performance
 
@@ -615,7 +699,7 @@ app.get('/api/user/listings', authenticateToken, async (req, res) => {
         const userId = req.user.userId;
         
         const auctions = await Auction.find({ seller: userId })
-            .populate('highestBidder', 'username')
+            .populate('highestBidder', 'username displayName')
             .sort({ createdAt: -1 })
             .limit(50); // Limit for performance
 
@@ -705,8 +789,8 @@ app.get('/api/admin/auctions', authenticateToken, async (req, res) => {
 
     try {
         const auctions = await Auction.find()
-            .populate('seller', 'username')
-            .populate('highestBidder', 'username')
+            .populate('seller', 'username displayName')
+            .populate('highestBidder', 'username displayName')
             .sort({ createdAt: -1 })
             .limit(100); // Limit for performance
         
@@ -781,7 +865,7 @@ app.post('/api/auctions/:id/end-early', authenticateToken, async (req, res) => {
         const auctionId = req.params.id;
         const userId = req.user.userId;
 
-        const auction = await Auction.findById(auctionId).populate('highestBidder', 'username');
+        const auction = await Auction.findById(auctionId).populate('highestBidder', 'username displayName');
         if (!auction) {
             return res.status(404).json({ message: 'Auction not found' });
         }
@@ -801,12 +885,13 @@ app.post('/api/auctions/:id/end-early', authenticateToken, async (req, res) => {
 
         let message;
         if (auction.highestBidder) {
-            message = `Auction ended early by seller. Winner: ${auction.highestBidder.username} with bid of $${auction.currentBid.toFixed(2)}`;
+            const winnerDisplay = auction.highestBidder.displayName || auction.highestBidder.username;
+            message = `Auction ended early by seller. Winner: ${winnerDisplay} with bid of $${auction.currentBid.toFixed(2)}`;
             
             // Emit socket event for early end with winner
             io.emit('auctionEndedEarly', {
                 auctionId,
-                winner: auction.highestBidder.username,
+                winner: winnerDisplay,
                 finalPrice: auction.currentBid,
                 message: 'Auction ended early by seller'
             });
@@ -856,19 +941,21 @@ const auctionExpiryChecker = setInterval(async () => {
         const expiredAuctions = await Auction.find({
             isActive: true,
             endDate: { $lte: new Date() }
-        }).populate('highestBidder', 'username');
+        }).populate('highestBidder', 'username displayName');
 
         for (const auction of expiredAuctions) {
             auction.isActive = false;
             await auction.save();
             
+            const winnerDisplay = auction.highestBidder ? 
+                (auction.highestBidder.displayName || auction.highestBidder.username) : 'No winner';
             const winnerMessage = auction.highestBidder 
-                ? `Winner: ${auction.highestBidder.username}`
+                ? `Winner: ${winnerDisplay}`
                 : 'No winner - no bids placed';
             
             io.emit('auctionEnded', {
                 auctionId: auction._id,
-                winner: auction.highestBidder ? auction.highestBidder.username : 'No winner',
+                winner: winnerDisplay,
                 finalPrice: auction.currentBid,
                 message: winnerMessage
             });

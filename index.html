@@ -1,0 +1,36 @@
+    <!-- Register Modal -->
+    <div id="registerModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="hideRegister()">&times;</span>
+            <h2>Join VG Vault</h2>
+            <form id="registerForm">
+                <div class="form-group">
+                    <label for="registerUsername">Username (for login):</label>
+                    <input type="text" id="registerUsername" required autocomplete="username" placeholder="Choose a username for login" minlength="3" maxlength="20">
+                    <small style="color: #6c757d;">This will be used to log in to your account</small>
+                </div>
+                <div class="form-group">
+                    <label for="registerDisplayName">Display Name:</label>
+                    <input type="text" id="registerDisplayName" required placeholder="Choose how your name appears to others" minlength="2" maxlength="30">
+                    <small style="color: #6c757d;">This is how your name will appear to other users</small>
+                </div>
+                <div class="form-group">
+                    <label for="registerEmail">Email:</label>
+                    <input type="email" id="registerEmail" required autocomplete="email" placeholder="Enter your email address">
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">Password:</label>
+                    <input type="password" id="registerPassword" required autocomplete="new-password" placeholder="Create a password" minlength="6">
+                </div>
+                <div class="form-group">
+                    <label for="registerPasswordConfirm">Confirm Password:</label>
+                    <input type="password" id="registerPasswordConfirm" required autocomplete="new-password" placeholder="Confirm your password" minlength="6">
+                    <small style="color: #6c757d;">Re-enter your password to confirm</small>
+                </div>
+                <button type="submit">Sign Up</button>
+                <p style="text-align: center; margin-top: 1rem; color: #6c757d;">
+                    Already have an account? <a href="#" onclick="hideRegister(); showLogin();" style="color: #ff6b35;">Login here</a>
+                </p>
+            </form>
+        </div>
+    </div>
