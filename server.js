@@ -637,6 +637,8 @@ app.post('/api/auctions', authenticateToken, upload.array('images', 5), async (r
 
         await auction.save();
         
+        console.log(`[AUCTION] New listing created successfully by ${req.user.displayName || req.user.username}: "${title}" (Starting: $${startingPrice})`);
+        
         if (imageUrls.length === 0 && req.files && req.files.length > 0) {
             res.json({ 
                 message: 'Auction created successfully (images were skipped - Cloudinary not configured)', 
@@ -710,6 +712,8 @@ app.post('/api/auctions/:id/bid', authenticateToken, async (req, res) => {
             amount: amount
         });
         await bid.save();
+
+        console.log(`[BID] Bid placed successfully by ${req.user.displayName || req.user.username}: $${amount} on "${auction.title}"`);
 
         // Create notification for previous highest bidder (outbid notification)
         if (previousHighestBidder && previousHighestBidder.toString() !== userId) {
